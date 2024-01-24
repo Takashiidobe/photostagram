@@ -1,11 +1,13 @@
 use expanduser::expanduser;
 use std::collections::BTreeMap;
+use std::env;
 use std::env::args;
 use std::fs::create_dir;
 use std::fs::remove_dir_all;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufWriter;
+use std::path::Path;
 
 use anyhow::Result;
 
@@ -24,12 +26,22 @@ fn main() -> Result<()> {
         panic!("Please provide a glob path that contains the photos you want to look at");
     };
 
-    let expanded = expanduser(glob_str)?;
+    let expanded = {
+        let path = expanduser(glob_str)?;
+        if Path::new(&path).is_relative() {
+            let mut pwd = env::current_dir()?;
+            pwd.push(path);
+            pwd
+        } else {
+            path
+        }
+    };
+    let expanded_str = expanded.to_str().expect("Could not parse provided path");
 
     let _ = remove_dir_all("./output");
     create_dir("./output")?;
     let mut times: BTreeMap<NaiveDate, Vec<(NaiveTime, String)>> = BTreeMap::new();
-    for path in glob::glob(expanded.to_str().unwrap())? {
+    for path in glob::glob(expanded_str)? {
         let path = path?;
         let file_path = path.display().to_string();
         let file = std::fs::File::open(path)?;
@@ -57,13 +69,7 @@ fn main() -> Result<()> {
     let mut f = File::create(format!("output/{}.html", html_index))?;
     let mut bf = BufWriter::new(f);
 
-    bf.write_all(
-        b"
-        <head>
-            <script src='./main.js'></script>
-        </head>
-    ",
-    )?;
+    bf.write_all(b"<head><script src='./main.js'></script></head>")?;
 
     for (date, file_names) in times.into_iter().rev() {
         let s = format!("<h2>{}</h2>\n", date);
@@ -86,51 +92,44 @@ fn main() -> Result<()> {
 
             f = File::create(format!("output/{}.html", html_index))?;
             bf = BufWriter::new(f);
-            bf.write_all(
-                b"
-        <head>
-            <script src='./main.js'></script>
-        </head>
-    ",
-            )?;
+            bf.write_all(b"<head><script src='./main.js'></script></head>")?;
         }
     }
 
     let js_file = format!(
-        r#"
-    let href = window.location;
-    let split = href.pathname.split('/');
-    let lastIndex = split.length - 1;
-    let filename = split[lastIndex];
+        r#"let href = window.location;
+let split = href.pathname.split('/');
+let lastIndex = split.length - 1;
+let filename = split[lastIndex];
 
-    let splitPath = filename.split('.');
-    let num = parseInt(splitPath[0]);
-    let prevIndex = num - 1;
-    let nextIndex = num + 1;
-    let prev = `${{prevIndex}}.html`;
-    let next = `${{nextIndex}}.html`;
+let splitPath = filename.split('.');
+let num = parseInt(splitPath[0]);
+let prevIndex = num - 1;
+let nextIndex = num + 1;
+let prev = `${{prevIndex}}.html`;
+let next = `${{nextIndex}}.html`;
 
-    let prevPath = [...split];
-    let nextPath = [...split];
-    prevPath[lastIndex] = prev;
-    nextPath[lastIndex] = next;
+let prevPath = [...split];
+let nextPath = [...split];
+prevPath[lastIndex] = prev;
+nextPath[lastIndex] = next;
 
-    prevPath = prevPath.join('/');
-    nextPath = nextPath.join('/');
+prevPath = prevPath.join('/');
+nextPath = nextPath.join('/');
 
-    console.log(prevPath, nextPath);
+console.log(prevPath, nextPath);
 
-    window.addEventListener(
-      "keydown",
-      (event) => {{
-        if (event.code == 'ArrowLeft' && prevIndex > 0) {{
-          window.location.href = prevPath;
-        }} else if (event.code == 'ArrowRight' && nextIndex < {html_index}) {{
-          window.location.href = nextPath;
-        }}
-      }},
-    );
-    "#
+window.addEventListener(
+  "keydown",
+  (event) => {{
+    if (event.code == 'ArrowLeft' && prevIndex > 0) {{
+      window.location.href = prevPath;
+    }} else if (event.code == 'ArrowRight' && nextIndex < {html_index}) {{
+      window.location.href = nextPath;
+    }}
+  }},
+);
+"#
     );
 
     let f = File::create("output/main.js")?;
